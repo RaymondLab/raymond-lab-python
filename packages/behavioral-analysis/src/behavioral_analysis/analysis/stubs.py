@@ -7,6 +7,19 @@ structures stay the same.
 
 from . import mock_data
 
+# Simple computation cache keyed on (function, block_index, params_tuple)
+_cache = {}
+
+
+def _params_key(params):
+    """Convert params dict to a hashable tuple for cache keys."""
+    return tuple(sorted(params.items())) if params else ()
+
+
+def clear_cache():
+    """Clear all cached computation results. Call on new session load."""
+    _cache.clear()
+
 
 def load_experiment_file(path):
     """Load an experiment file and return session data.
@@ -19,6 +32,7 @@ def load_experiment_file(path):
         channels (list[str]), blocks (list[dict]), metadata_defaults (dict),
         analysis_type (str), timelines (dict), file_info (dict).
     """
+    clear_cache()
     return mock_data.generate_mock_session()
 
 
@@ -55,7 +69,10 @@ def process_block(session, block_index, params):
         filtered_velocity (ndarray[60000]), stimulus (ndarray[60000]),
         saccade_mask (ndarray[60000] bool).
     """
-    return mock_data.generate_mock_block_signals(block_index, params)
+    key = ("process_block", block_index, _params_key(params))
+    if key not in _cache:
+        _cache[key] = mock_data.generate_mock_block_signals(block_index, params)
+    return _cache[key]
 
 
 def compute_cycle_analysis(session, block_index, params):
@@ -72,7 +89,10 @@ def compute_cycle_analysis(session, block_index, params):
         cycle_fit (ndarray[1000]), stimulus_trace (ndarray[1000]),
         cycle_quality (list[bool]).
     """
-    return mock_data.generate_mock_cycle_data(block_index)
+    key = ("cycle_analysis", block_index, _params_key(params))
+    if key not in _cache:
+        _cache[key] = mock_data.generate_mock_cycle_data(block_index)
+    return _cache[key]
 
 
 def compute_block_metrics(session, block_index, params):
@@ -90,7 +110,10 @@ def compute_block_metrics(session, block_index, params):
         freq_hz (float), good_cycles (int), total_cycles (int),
         var_residual (float).
     """
-    return mock_data.generate_mock_block_metrics(block_index)
+    key = ("block_metrics", block_index, _params_key(params))
+    if key not in _cache:
+        _cache[key] = mock_data.generate_mock_block_metrics(block_index)
+    return _cache[key]
 
 
 def compute_all_results(session, params):
@@ -102,7 +125,10 @@ def compute_all_results(session, params):
 
     Returns list of block metric dicts (one per block).
     """
-    return mock_data.generate_mock_results_table()
+    key = ("all_results", _params_key(params))
+    if key not in _cache:
+        _cache[key] = mock_data.generate_mock_results_table()
+    return _cache[key]
 
 
 def export_excel(results, path):

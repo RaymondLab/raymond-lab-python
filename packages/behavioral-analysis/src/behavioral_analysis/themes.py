@@ -44,6 +44,12 @@ LIGHT_THEME = {
     "qualWarn": "#D4930D",
     "qualBad": "#CF2C2C",
     "qualSelected": "#2D5FD4",
+    # Typography tokens
+    "fontMono": "'Consolas', 'SF Mono', 'Menlo', monospace",
+    "fontXs": "9px",
+    "fontSm": "11px",
+    "fontMd": "12px",
+    "fontLg": "14px",
 }
 
 DARK_THEME = {
@@ -57,7 +63,7 @@ DARK_THEME = {
     "bgTabInactive": "#243040",
     "bgCalibration": "#1A2430",
     "bgParamBar": "#18202A",
-    "bgPlot": "#18202A",
+    "bgPlot": "#141C26",
     # Borders
     "border": "#304050",
     "borderLight": "#243040",
@@ -90,6 +96,12 @@ DARK_THEME = {
     "qualWarn": "#F0B030",
     "qualBad": "#F06B6B",
     "qualSelected": "#6BA3F5",
+    # Typography tokens
+    "fontMono": "'Consolas', 'SF Mono', 'Menlo', monospace",
+    "fontXs": "9px",
+    "fontSm": "11px",
+    "fontMd": "12px",
+    "fontLg": "14px",
 }
 
 
@@ -103,6 +115,11 @@ def generate_stylesheet(theme):
     QWidget {{
         font-family: "Segoe UI", "SF Pro Text", system-ui, sans-serif;
         font-size: 12px;
+        color: {t['textPrimary']};
+        background-color: {t['bgApp']};
+    }}
+    QDialog, QMessageBox, QProgressDialog {{
+        background-color: {t['bgPanel']};
         color: {t['textPrimary']};
     }}
     QGroupBox {{
@@ -276,6 +293,24 @@ def generate_stylesheet(theme):
     QLabel {{
         background: transparent;
     }}
+    QMenu {{
+        background-color: {t['bgPanel']};
+        border: 1px solid {t['border']};
+        color: {t['textPrimary']};
+        padding: 4px 0;
+    }}
+    QMenu::item {{
+        padding: 4px 20px;
+    }}
+    QMenu::item:selected {{
+        background-color: {t['accentLight']};
+        color: {t['textPrimary']};
+    }}
+    QMenu::separator {{
+        height: 1px;
+        background: {t['border']};
+        margin: 4px 8px;
+    }}
     QFrame[frameShape="4"] {{
         color: {t['border']};
     }}
@@ -292,6 +327,19 @@ def generate_stylesheet(theme):
         background-color: {t['bgParamBar']};
         border: 1px solid {t['borderLight']};
         border-radius: 3px;
+    }}
+    #sectionHeader {{
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: {t['textTertiary']};
+    }}
+    #settingsPanel {{
+        border-left: 2px solid {t['border']};
+        background-color: {t['bgPanel']};
+    }}
+    [monospace="true"] {{
+        font-family: {t['fontMono']};
     }}
     #w1SummaryBar {{
         background-color: {t['bgPanelAlt']};

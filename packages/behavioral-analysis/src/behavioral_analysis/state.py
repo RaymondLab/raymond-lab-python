@@ -1,6 +1,6 @@
 """Centralized application state with Qt signals for cross-component synchronization."""
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 
 class AppState(QObject):
@@ -88,6 +88,12 @@ class AppState(QObject):
 
         # Metadata (stored as dict, not individually signaled)
         self.metadata = {}
+
+        # Coalesce parameters_changed emissions: batch within one event loop tick
+        self._params_timer = QTimer(self)
+        self._params_timer.setSingleShot(True)
+        self._params_timer.setInterval(0)
+        self._params_timer.timeout.connect(self.parameters_changed.emit)
 
     # --- Navigation properties ---
 
@@ -267,7 +273,7 @@ class AppState(QObject):
         if self._filter_method != value:
             self._filter_method = value
             self.filter_method_changed.emit(value)
-            self.parameters_changed.emit()
+            self._params_timer.start()
 
     @property
     def lp_cutoff_hz(self):
@@ -278,7 +284,7 @@ class AppState(QObject):
         if self._lp_cutoff_hz != value:
             self._lp_cutoff_hz = value
             self.lp_cutoff_hz_changed.emit(value)
-            self.parameters_changed.emit()
+            self._params_timer.start()
 
     @property
     def sg_window_ms(self):
@@ -289,7 +295,7 @@ class AppState(QObject):
         if self._sg_window_ms != value:
             self._sg_window_ms = value
             self.sg_window_ms_changed.emit(value)
-            self.parameters_changed.emit()
+            self._params_timer.start()
 
     @property
     def saccade_method(self):
@@ -300,7 +306,7 @@ class AppState(QObject):
         if self._saccade_method != value:
             self._saccade_method = value
             self.saccade_method_changed.emit(value)
-            self.parameters_changed.emit()
+            self._params_timer.start()
 
     @property
     def saccade_threshold(self):
@@ -311,7 +317,7 @@ class AppState(QObject):
         if self._saccade_threshold != value:
             self._saccade_threshold = value
             self.saccade_threshold_changed.emit(value)
-            self.parameters_changed.emit()
+            self._params_timer.start()
 
     @property
     def saccade_min_dur_ms(self):
@@ -322,7 +328,7 @@ class AppState(QObject):
         if self._saccade_min_dur_ms != value:
             self._saccade_min_dur_ms = value
             self.saccade_min_dur_ms_changed.emit(value)
-            self.parameters_changed.emit()
+            self._params_timer.start()
 
     @property
     def saccade_padding_ms(self):
@@ -333,7 +339,7 @@ class AppState(QObject):
         if self._saccade_padding_ms != value:
             self._saccade_padding_ms = value
             self.saccade_padding_ms_changed.emit(value)
-            self.parameters_changed.emit()
+            self._params_timer.start()
 
     # --- Appearance properties ---
 

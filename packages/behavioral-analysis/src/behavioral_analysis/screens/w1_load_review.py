@@ -30,7 +30,7 @@ class W1Screen(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        # ── Control bar ──
+        # ── Control bar (includes Browse, path, type, Next) ──
         ctrl = QFrame()
         ctrl.setObjectName("w1ControlBar")
         ctrl_layout = QVBoxLayout(ctrl)
@@ -55,6 +55,12 @@ class W1Screen(QWidget):
         self._type_combo.setCurrentText(self.state.analysis_type)
         self._type_combo.currentTextChanged.connect(self._on_type_changed)
         row1.addWidget(self._type_combo)
+
+        self._next_btn = QPushButton("Next \u2192")
+        self._next_btn.setProperty("primary", True)
+        self._next_btn.setEnabled(False)
+        self._next_btn.clicked.connect(self._on_next)
+        row1.addWidget(self._next_btn)
 
         ctrl_layout.addLayout(row1)
 
@@ -147,6 +153,7 @@ class W1Screen(QWidget):
         plots_layout.addWidget(p3_header)
 
         pw3 = self._make_plot_widget(theme)
+        pw3.setLabel("bottom", "Time (s)")
         self._plot3_curve1 = pw3.plot(
             pen=pg.mkPen(theme["dataPosition"], width=1), name="hepos1"
         )
@@ -226,9 +233,18 @@ class W1Screen(QWidget):
         pw.getAxis("left").setTextPen(pg.mkPen(theme["textTertiary"]))
         pw.showGrid(x=True, y=True, alpha=0.1)
         pw.setMouseEnabled(x=True, y=False)
+        pw.setClipToView(True)
+        pw.setDownsampling(mode="peak")
         return pw
 
     # ── Actions ──
+
+    def update_next_enabled(self, enabled):
+        """Called by MainWindow when file_loaded changes."""
+        self._next_btn.setEnabled(enabled)
+
+    def _on_next(self):
+        self.state.wizard_step = 2
 
     def _on_browse(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -353,9 +369,7 @@ class W1Screen(QWidget):
         blocks = self._session["blocks"]
         if 0 <= row < len(blocks):
             block = blocks[row]
-            center = (block["start_time"] + block["end_time"]) / 2
-            span = block["end_time"] - block["start_time"]
-            padding = span * 0.5
+            padding = (block["end_time"] - block["start_time"]) * 0.5
             for pw in self._plots:
                 pw.setXRange(
                     block["start_time"] - padding,
@@ -365,12 +379,22 @@ class W1Screen(QWidget):
             self.state.selected_block = row
 
     def retheme(self, theme):
-        """Update plot styling when theme changes."""
+        """Update plot styling when theme changes — no data reload."""
         for pw in self._plots:
             pw.setBackground(theme["bgPlot"])
             pw.getAxis("bottom").setPen(pg.mkPen(theme["border"]))
             pw.getAxis("left").setPen(pg.mkPen(theme["border"]))
             pw.getAxis("bottom").setTextPen(pg.mkPen(theme["textTertiary"]))
             pw.getAxis("left").setTextPen(pg.mkPen(theme["textTertiary"]))
-        if self._session:
-            self._populate_ui()
+
+        # Update block region brushes in-place
+        if self._session and self._block_regions:
+            blocks = self._session["blocks"]
+            # regions are stored as (pw, region) in block order × 3 plots
+            for i, (pw, region) in enumerate(self._block_regions):
+                block_idx = i // len(self._plots)
+                if block_idx < len(blocks):
+                    block = blocks[block_idx]
+                    color = theme["blockPrepost"] if block["type"] in ("pre", "post") else theme["blockTrain"]
+                    qc = QColor(color)
+                    region.setBrush(pg.mkBrush(qc.red(), qc.green(), qc.blue(), 35))

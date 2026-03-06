@@ -21,8 +21,8 @@ class S1Panel(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Left border
-        self.setStyleSheet("S1Panel { border-left: 2px solid #CDD4DC; }")
+        # Left border (themed via QSS #settingsPanel)
+        self.setObjectName("settingsPanel")
 
         # Header
         header = QFrame()
@@ -195,10 +195,7 @@ class S1Panel(QWidget):
 
     def _section_label(self, text):
         lbl = QLabel(text)
-        lbl.setStyleSheet(
-            "font-size: 10px; font-weight: 700; "
-            "letter-spacing: 0.06em;"
-        )
+        lbl.setObjectName("sectionHeader")
         return lbl
 
     def _separator(self):

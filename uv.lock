@@ -132,7 +132,7 @@ wheels = [
 [[package]]
 name = "behavioral-analysis"
 version = "0.1.0"
-source = { virtual = "packages/behavioral-analysis" }
+source = { editable = "packages/behavioral-analysis" }
 dependencies = [
     { name = "pyqtgraph" },
     { name = "pyside6" },

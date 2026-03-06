@@ -40,7 +40,7 @@ class ParameterSlider(QWidget):
         self._label = QLabel(label)
         self._label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._label.setMinimumWidth(72)
-        self._label.setStyleSheet("font-size: 11px; font-weight: 600;")
+        self._label.setObjectName("sectionHeader")
         layout.addWidget(self._label)
 
         # Slider
@@ -62,10 +62,10 @@ class ParameterSlider(QWidget):
         )
         layout.addWidget(self._value_display)
 
-        # Debounce timer (80ms)
+        # Debounce timer (150ms)
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
-        self._debounce.setInterval(80)
+        self._debounce.setInterval(150)
         self._debounce.timeout.connect(self._emit_value)
 
         self._pending_value = default

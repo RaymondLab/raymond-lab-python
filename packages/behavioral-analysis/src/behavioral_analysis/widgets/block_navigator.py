@@ -14,9 +14,11 @@ class _BlockStrip(QWidget):
         super().__init__(parent)
         self._blocks = []  # list of dicts: {type, quality_fraction}
         self._selected = 0
+        self._hover_index = -1
         self.setMinimumHeight(26)
         self.setMinimumWidth(100)
         self.setCursor(Qt.PointingHandCursor)
+        self.setMouseTracking(True)
 
         # Theme colors (defaults to light theme; call set_theme to update)
         self._colors = {
@@ -46,18 +48,35 @@ class _BlockStrip(QWidget):
     def selected(self):
         return self._selected
 
-    def mousePressEvent(self, event):
+    def _index_at(self, x):
+        """Map x position to block index."""
         if not self._blocks:
-            return
+            return -1
         n = len(self._blocks)
         w = self.width()
         gap = 1
         seg_w = max(1, (w - gap * (n - 1)) / n)
-        idx = int(event.position().x() / (seg_w + gap))
-        idx = max(0, min(idx, n - 1))
+        idx = int(x / (seg_w + gap))
+        return max(0, min(idx, n - 1))
+
+    def mousePressEvent(self, event):
+        if not self._blocks:
+            return
+        idx = self._index_at(event.position().x())
         if idx != self._selected:
             self._selected = idx
             self.clicked.emit(idx)
+            self.update()
+
+    def mouseMoveEvent(self, event):
+        idx = self._index_at(event.position().x())
+        if idx != self._hover_index:
+            self._hover_index = idx
+            self.update()
+
+    def leaveEvent(self, event):
+        if self._hover_index != -1:
+            self._hover_index = -1
             self.update()
 
     def paintEvent(self, event):
@@ -77,10 +96,13 @@ class _BlockStrip(QWidget):
         c = self._colors
         outline_pen = QPen(QColor(c["textPrimary"]), 2)
 
+        hover_brush = QColor(255, 255, 255, 60)
+
         for i, block in enumerate(self._blocks):
             x = int(i * (seg_w + gap))
             sw = int(seg_w)
             is_sel = (i == self._selected)
+            is_hover = (i == self._hover_index and not is_sel)
 
             # Top row: block type color
             if block.get("type") in ("pre", "post"):
@@ -89,11 +111,13 @@ class _BlockStrip(QWidget):
                 color = QColor(c["blockTrain"])
 
             if not is_sel:
-                color.setAlphaF(0.45)
+                color.setAlphaF(0.65 if is_hover else 0.45)
             painter.fillRect(QRect(x, 0, sw, top_h), color)
             if is_sel:
                 painter.setPen(outline_pen)
                 painter.drawRect(QRect(x, 0, sw - 1, top_h - 1))
+            elif is_hover:
+                painter.fillRect(QRect(x, 0, sw, top_h), hover_brush)
 
             # Bottom row: quality color
             qf = block.get("quality_fraction", 0.5)
@@ -105,11 +129,13 @@ class _BlockStrip(QWidget):
                 qcolor = QColor(c["qualBad"])
 
             if not is_sel:
-                qcolor.setAlphaF(0.45)
+                qcolor.setAlphaF(0.65 if is_hover else 0.45)
             painter.fillRect(QRect(x, top_h + 1, sw, bot_h), qcolor)
             if is_sel:
                 painter.setPen(outline_pen)
                 painter.drawRect(QRect(x, top_h + 1, sw - 1, bot_h - 1))
+            elif is_hover:
+                painter.fillRect(QRect(x, top_h + 1, sw, bot_h), hover_brush)
 
         painter.end()
 
@@ -125,11 +151,12 @@ class BlockNavigator(QWidget):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
-        # Prev button
+        # Prev button (compact)
         self._prev_btn = QPushButton("\u25C2")
-        self._prev_btn.setFixedWidth(28)
+        self._prev_btn.setFixedWidth(24)
+        self._prev_btn.setStyleSheet("padding: 1px 4px;")
         self._prev_btn.clicked.connect(self._go_prev)
         layout.addWidget(self._prev_btn)
 
@@ -138,27 +165,45 @@ class BlockNavigator(QWidget):
         self._strip.clicked.connect(self._on_strip_clicked)
         layout.addWidget(self._strip, 1)
 
-        # Next button
+        # Next button (compact)
         self._next_btn = QPushButton("\u25B8")
-        self._next_btn.setFixedWidth(28)
+        self._next_btn.setFixedWidth(24)
+        self._next_btn.setStyleSheet("padding: 1px 4px;")
         self._next_btn.clicked.connect(self._go_next)
         layout.addWidget(self._next_btn)
 
-        # Label area
+        # Label area with block info + quality legend
         label_area = QWidget()
         label_layout = QVBoxLayout(label_area)
         label_layout.setContentsMargins(4, 0, 0, 0)
-        label_layout.setSpacing(0)
+        label_layout.setSpacing(1)
 
+        # Block info row
+        info_row = QHBoxLayout()
+        info_row.setSpacing(4)
         self._block_label = QLabel("Block 0 / 0")
-        self._block_label.setStyleSheet("font-weight: bold; font-size: 12px;")
-        label_layout.addWidget(self._block_label)
-
+        self._block_label.setStyleSheet("font-weight: bold; font-size: 11px;")
+        info_row.addWidget(self._block_label)
         self._block_type_label = QLabel("")
-        self._block_type_label.setStyleSheet("font-size: 10px;")
-        label_layout.addWidget(self._block_type_label)
+        self._block_type_label.setStyleSheet("font-size: 10px; color: #8490A0;")
+        info_row.addWidget(self._block_type_label)
+        info_row.addStretch()
+        label_layout.addLayout(info_row)
 
-        label_area.setFixedWidth(120)
+        # Quality legend row
+        legend_row = QHBoxLayout()
+        legend_row.setSpacing(6)
+        for color, text in [("#1A9E50", "\u226540%"), ("#D4930D", "20-40%"), ("#CF2C2C", "<20%")]:
+            dot = QLabel()
+            dot.setFixedSize(7, 4)
+            dot.setStyleSheet(f"background-color: {color}; border-radius: 1px;")
+            legend_row.addWidget(dot)
+            lbl = QLabel(text)
+            lbl.setStyleSheet("font-size: 8px; color: #8490A0;")
+            legend_row.addWidget(lbl)
+        legend_row.addStretch()
+        label_layout.addLayout(legend_row)
+
         layout.addWidget(label_area)
 
     def set_blocks(self, blocks):

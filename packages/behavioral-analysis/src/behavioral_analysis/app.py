@@ -5,7 +5,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget,
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QStatusBar, QMessageBox, QFrame,
+    QMessageBox, QFrame,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -18,6 +18,8 @@ from .screens.a1_signal_explorer import A1Screen
 from .screens.a2_block_analysis import A2Screen
 from .screens.a3_results_summary import A3Screen
 from .screens.s1_settings_panel import S1Panel
+from .widgets.segmented_control import SegmentedControl
+from .widgets.badge import Badge
 
 
 # Tab labels and state keys
@@ -68,30 +70,6 @@ class MainWindow(QMainWindow):
         self._wizard_stack.addWidget(self._w2)  # index 1
         wiz_layout.addWidget(self._wizard_stack, 1)
 
-        # Wizard button bar
-        wiz_btn_bar = QFrame()
-        wiz_btn_bar.setStyleSheet("padding: 8px;")
-        wiz_btn_layout = QHBoxLayout(wiz_btn_bar)
-        wiz_btn_layout.setContentsMargins(16, 8, 16, 8)
-
-        self._skip_btn = QPushButton("Skip to Workspace (dev)")
-        self._skip_btn.setStyleSheet("color: #8490A0; font-size: 11px;")
-        self._skip_btn.clicked.connect(self._skip_to_workspace)
-        wiz_btn_layout.addWidget(self._skip_btn)
-
-        wiz_btn_layout.addStretch()
-
-        self._back_btn = QPushButton("Back")
-        self._back_btn.clicked.connect(self._wizard_back)
-        wiz_btn_layout.addWidget(self._back_btn)
-
-        self._next_btn = QPushButton("Next \u2192")
-        self._next_btn.setProperty("primary", True)
-        self._next_btn.setEnabled(False)  # disabled until file loaded
-        self._next_btn.clicked.connect(self._wizard_next)
-        wiz_btn_layout.addWidget(self._next_btn)
-
-        wiz_layout.addWidget(wiz_btn_bar)
         self._phase_stack.addWidget(self._wizard_widget)  # phase index 0
 
         # ── Workspace phase ──
@@ -125,35 +103,29 @@ class MainWindow(QMainWindow):
         self._content_layout.addWidget(self._s1)
 
         ws_layout.addWidget(content_area, 1)
-        self._phase_stack.addWidget(self._workspace_widget)  # phase index 1
 
-        # ── Status bar (workspace only) ──
-        self._status_bar = QStatusBar()
-        self._status_left = QLabel("M001 · 2026-01-15")
-        self._status_left.setStyleSheet(
-            "font-weight: bold; color: white; padding: 2px 8px;"
-        )
+        # ── Status bar (custom QFrame for precise layout control) ──
+        self._status_bar = QFrame()
+        self._status_bar.setFixedHeight(24)
+        status_layout = QHBoxLayout(self._status_bar)
+        status_layout.setContentsMargins(12, 0, 12, 0)
+        status_layout.setSpacing(16)
+
+        self._status_left = QLabel("M001 \u00B7 2026-01-15")
         self._status_type = QLabel("Standard VOR")
-        self._status_type.setStyleSheet(
-            "color: rgba(255,255,255,0.7); font-family: monospace; "
-            "font-size: 11px; padding: 2px 4px;"
-        )
-        self._status_params = QLabel("LP:40Hz · SG:30ms · Sac:50°/s")
-        self._status_params.setStyleSheet(
-            "color: rgba(255,255,255,0.85); font-family: monospace; "
-            "font-size: 11px; padding: 2px 8px;"
-        )
-        self._status_session = QLabel("1000Hz · 62 blocks")
-        self._status_session.setStyleSheet(
-            "color: rgba(255,255,255,0.7); font-family: monospace; "
-            "font-size: 11px; padding: 2px 8px;"
-        )
-        self._status_bar.addWidget(self._status_left)
-        self._status_bar.addWidget(self._status_type)
-        self._status_bar.addPermanentWidget(self._status_params)
-        self._status_bar.addPermanentWidget(self._status_session)
-        self.setStatusBar(self._status_bar)
+        self._status_params = QLabel("LP:40Hz \u00B7 SG:30ms \u00B7 Sac:50\u00B0/s")
+        self._status_session = QLabel("1000Hz \u00B7 62 blocks")
+
+        status_layout.addWidget(self._status_left)
+        status_layout.addWidget(self._status_type)
+        status_layout.addStretch()
+        status_layout.addWidget(self._status_params)
+        status_layout.addWidget(self._status_session)
+
         self._status_bar.setVisible(False)
+        ws_layout.addWidget(self._status_bar)
+
+        self._phase_stack.addWidget(self._workspace_widget)  # phase index 1
 
         # ── Wire state signals ──
         self.state.phase_changed.connect(self._on_phase_changed)
@@ -172,8 +144,8 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Escape), self, self._shortcut_escape)
 
         # Initialize UI to match default state
-        self._sync_wizard_ui()
         self._update_title()
+        self._apply_theme_styles(LIGHT_THEME)
 
     # ── Toolbar ──
 
@@ -182,76 +154,43 @@ class MainWindow(QMainWindow):
         toolbar.setObjectName("workspaceToolbar")
         layout = QHBoxLayout(toolbar)
         layout.setContentsMargins(12, 6, 12, 6)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
 
-        # Left: session info placeholders
+        # Left: session info
         self._tb_mouse_id = QLabel("M001")
-        self._tb_mouse_id.setStyleSheet("font-weight: bold; font-size: 14px;")
         layout.addWidget(self._tb_mouse_id)
 
         self._tb_date = QLabel("2026-01-15")
-        self._tb_date.setStyleSheet(
-            "font-family: monospace; font-size: 11px;"
-        )
         layout.addWidget(self._tb_date)
 
-        self._tb_type_badge = QLabel("Standard VOR")
-        self._tb_type_badge.setStyleSheet(
-            "font-size: 10px; font-weight: 600; padding: 2px 8px; "
-            "border-radius: 3px; background-color: #E0EDF5; color: #2E5A74;"
-        )
+        self._tb_type_badge = Badge("Standard VOR", variant="accent")
         layout.addWidget(self._tb_type_badge)
 
         layout.addStretch()
 
-        # Right: New Analysis button
-        new_analysis_btn = QPushButton("\u21BA New Analysis")
-        new_analysis_btn.clicked.connect(self._new_analysis)
-        layout.addWidget(new_analysis_btn)
+        # Right: New Analysis button (ghost style)
+        self._new_analysis_btn = QPushButton("\u21BA New Analysis")
+        self._new_analysis_btn.setObjectName("toolbarGhostBtn")
+        self._new_analysis_btn.clicked.connect(self._new_analysis)
+        layout.addWidget(self._new_analysis_btn)
 
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFixedHeight(24)
-        layout.addWidget(sep)
-
-        # Tab buttons
-        self._tab_buttons = {}
-        for label, key in _TAB_INFO:
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setProperty("tabKey", key)
-            btn.clicked.connect(lambda checked, k=key: self._on_tab_clicked(k))
-            self._tab_buttons[key] = btn
-            layout.addWidget(btn)
-
-        # Separator
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.VLine)
-        sep2.setFixedHeight(24)
-        layout.addWidget(sep2)
+        # Tab segmented control
+        self._tab_control = SegmentedControl(
+            [(label, key) for label, key in _TAB_INFO]
+        )
+        self._tab_control.selection_changed.connect(self._on_tab_clicked)
+        layout.addWidget(self._tab_control)
 
         # Gear button
-        gear_btn = QPushButton("\u2699")
-        gear_btn.setFixedWidth(32)
-        gear_btn.setStyleSheet("font-size: 16px;")
-        gear_btn.clicked.connect(self._toggle_settings)
-        layout.addWidget(gear_btn)
-
-        # Set initial tab selection
-        self._sync_tab_buttons()
+        self._gear_btn = QPushButton("\u2699")
+        self._gear_btn.setObjectName("gearBtn")
+        self._gear_btn.setFixedSize(30, 30)
+        self._gear_btn.clicked.connect(self._toggle_settings)
+        layout.addWidget(self._gear_btn)
 
         return toolbar
 
     # ── Navigation handlers ──
-
-    def _wizard_back(self):
-        if self.state.wizard_step > 1:
-            self.state.wizard_step = self.state.wizard_step - 1
-
-    def _wizard_next(self):
-        if self.state.wizard_step < 2:
-            self.state.wizard_step = self.state.wizard_step + 1
 
     def _skip_to_workspace(self):
         self.state.phase = "workspace"
@@ -280,46 +219,38 @@ class MainWindow(QMainWindow):
         if phase == "wizard":
             self._phase_stack.setCurrentIndex(0)
             self._status_bar.setVisible(False)
-            self._sync_wizard_ui()
         else:
             self._phase_stack.setCurrentIndex(1)
             self._status_bar.setVisible(True)
-            self._apply_status_bar_style()
-            self._sync_tab_buttons()
+            self._tab_control.set_selected(self.state.workspace_tab)
             self._on_workspace_tab_changed(self.state.workspace_tab)
         self._update_title()
+        theme = DARK_THEME if self.state.dark_mode else LIGHT_THEME
+        self._apply_theme_styles(theme)
 
     def _on_wizard_step_changed(self, step):
         self._wizard_stack.setCurrentIndex(step - 1)
-        self._sync_wizard_ui()
         self._update_title()
 
     def _on_workspace_tab_changed(self, tab):
         tab_index = {"A1": 0, "A2": 1, "A3": 2}.get(tab, 0)
         self._workspace_stack.setCurrentIndex(tab_index)
-        self._sync_tab_buttons()
+        self._tab_control.set_selected(tab)
         self._update_title()
 
     def _on_settings_open_changed(self, is_open):
+        self._s1.setMaximumWidth(16777215 if is_open else 265)
         self._s1.setVisible(is_open)
+        self._update_gear_style()
 
     def _on_dark_mode_changed(self, dark):
         theme = DARK_THEME if dark else LIGHT_THEME
+
+        # Suppress repaints during bulk style changes
+        self.setUpdatesEnabled(False)
+
         apply_theme(QApplication.instance(), theme)
-        self._apply_status_bar_style()
-        self._sync_tab_buttons()
-
-        # Toolbar badge
-        self._tb_type_badge.setStyleSheet(
-            f"font-size: 10px; font-weight: 600; padding: 2px 8px; "
-            f"border-radius: 3px; background-color: {theme['accentLight']}; "
-            f"color: {theme['accentText']};"
-        )
-
-        # Toolbar background
-        self._toolbar.setStyleSheet(
-            f"#workspaceToolbar {{ background-color: {theme['bgTopbar']}; }}"
-        )
+        self._apply_theme_styles(theme)
 
         # Propagate retheme to screens with pyqtgraph plots
         for screen in (self._w1, self._a1, self._a2, self._a3):
@@ -346,6 +277,8 @@ class MainWindow(QMainWindow):
             "textPrimary": theme["textPrimary"],
         }
         self._a2._cycle_nav.set_theme(cycle_colors)
+
+        self.setUpdatesEnabled(True)
 
     # ── Keyboard shortcuts ──
 
@@ -375,21 +308,23 @@ class MainWindow(QMainWindow):
     # ── UI sync helpers ──
 
     def _on_file_loaded_changed(self, loaded):
-        self._next_btn.setEnabled(loaded)
+        self._w1.update_next_enabled(loaded)
 
     def _on_session_data_changed(self, session):
         if session is None:
             return
+        dash = "\u2014"
         md = session.get("metadata_defaults", {})
-        self._tb_mouse_id.setText(md.get("subject_id", "—"))
-        self._tb_date.setText(md.get("session_date", "—"))
-        self._tb_type_badge.setText(session.get("analysis_type", "—"))
-        self._status_left.setText(
-            f"{md.get('subject_id', '—')} \u00B7 {md.get('session_date', '—')}"
-        )
-        self._status_type.setText(session.get("analysis_type", "—"))
-        sr = session.get("sample_rate", "—")
-        nb = session.get("num_blocks", "—")
+        subject = md.get("subject_id", dash)
+        date = md.get("session_date", dash)
+        atype = session.get("analysis_type", dash)
+        self._tb_mouse_id.setText(subject)
+        self._tb_date.setText(date)
+        self._tb_type_badge.setText(atype)
+        self._status_left.setText(f"{subject} \u00B7 {date}")
+        self._status_type.setText(atype)
+        sr = session.get("sample_rate", dash)
+        nb = session.get("num_blocks", dash)
         self._status_session.setText(f"{sr}Hz \u00B7 {nb} blocks")
 
     def _update_status_params(self):
@@ -398,32 +333,6 @@ class MainWindow(QMainWindow):
             f"LP:{s.lp_cutoff_hz:.0f}Hz \u00B7 SG:{s.sg_window_ms:.0f}ms "
             f"\u00B7 Sac:{s.saccade_threshold:.0f}\u00B0/s"
         )
-
-    def _sync_wizard_ui(self):
-        step = self.state.wizard_step
-        self._back_btn.setVisible(step > 1)
-        self._next_btn.setVisible(step < 2)
-        self._next_btn.setEnabled(self.state.file_loaded)
-
-    def _sync_tab_buttons(self):
-        current = self.state.workspace_tab
-        theme = DARK_THEME if self.state.dark_mode else LIGHT_THEME
-        for key, btn in self._tab_buttons.items():
-            btn.blockSignals(True)
-            btn.setChecked(key == current)
-            btn.blockSignals(False)
-            if key == current:
-                btn.setStyleSheet(
-                    f"background-color: {theme['bgTabActive']}; "
-                    f"color: {theme['textInverse']}; "
-                    "font-weight: bold; border-radius: 3px; padding: 4px 12px;"
-                )
-            else:
-                btn.setStyleSheet(
-                    f"background-color: {theme['bgTabInactive']}; "
-                    f"color: {theme['textOnTopbar']}; "
-                    "border-radius: 3px; padding: 4px 12px;"
-                )
 
     def _update_title(self):
         base = "Behavioral Experiment Analysis"
@@ -434,15 +343,89 @@ class MainWindow(QMainWindow):
             suffix = _WORKSPACE_TITLES.get(self.state.workspace_tab, "")
             self.setWindowTitle(f"{base} \u2014 {suffix}")
 
-    def _apply_status_bar_style(self):
-        theme = DARK_THEME if self.state.dark_mode else LIGHT_THEME
-        self._status_bar.setStyleSheet(
-            f"QStatusBar {{ background-color: {theme['accent']}; }}"
+    def _apply_theme_styles(self, theme):
+        """Apply theme-dependent inline styles to toolbar, status bar, etc."""
+        t = theme
+
+        # Toolbar background
+        self._toolbar.setStyleSheet(
+            f"#workspaceToolbar {{ background-color: {t['bgTopbar']}; "
+            f"border-bottom: 1px solid {t['border']}; }}"
         )
+
+        # Toolbar labels (light on dark)
+        self._tb_mouse_id.setStyleSheet(
+            f"font-weight: bold; font-size: 14px; color: {t['textInverse']};"
+        )
+        self._tb_date.setStyleSheet(
+            f"font-family: 'Consolas','SF Mono','Menlo',monospace; "
+            f"font-size: 11px; color: {t['textOnTopbar']};"
+        )
+        self._tb_type_badge.set_dark(self.state.dark_mode)
+
+        # New Analysis ghost button
+        self._new_analysis_btn.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: none; "
+            f"color: {t['textOnTopbar']}; font-size: 11px; padding: 4px 10px; }}"
+            f"QPushButton:hover {{ color: {t['textInverse']}; }}"
+        )
+
+        # Tab control colors
+        self._tab_control.set_theme(
+            active_bg=t["bgTabActive"],
+            active_fg=t["textInverse"],
+            inactive_bg=t["bgTabInactive"],
+            inactive_fg=t["textOnTopbar"],
+            border=t["border"],
+        )
+
+        # Gear button
+        self._update_gear_style()
+
+        # Status bar (muted accent background)
+        self._status_bar.setStyleSheet(
+            f"background-color: {t['accentDark']};"
+        )
+        self._status_left.setStyleSheet(
+            f"font-weight: 600; font-size: 11px; color: {t['textInverse']};"
+        )
+        self._status_type.setStyleSheet(
+            f"font-size: 11px; font-family: 'Consolas','SF Mono','Menlo',monospace; "
+            f"color: rgba(255,255,255,0.7);"
+        )
+        self._status_params.setStyleSheet(
+            f"font-size: 11px; font-family: 'Consolas','SF Mono','Menlo',monospace; "
+            f"color: rgba(255,255,255,0.85);"
+        )
+        self._status_session.setStyleSheet(
+            f"font-size: 11px; font-family: 'Consolas','SF Mono','Menlo',monospace; "
+            f"color: rgba(255,255,255,0.5);"
+        )
+
+    def _update_gear_style(self):
+        t = DARK_THEME if self.state.dark_mode else LIGHT_THEME
+        is_open = self.state.settings_open
+        if is_open:
+            self._gear_btn.setStyleSheet(
+                f"QPushButton {{ font-size: 16px; border: 1px solid {t['accent']}; "
+                f"border-radius: 3px; background-color: {t['accentLight']}; "
+                f"color: {t['accent']}; }}"
+            )
+        else:
+            self._gear_btn.setStyleSheet(
+                f"QPushButton {{ font-size: 16px; border: 1px solid {t['border']}; "
+                f"border-radius: 3px; background-color: transparent; "
+                f"color: {t['textOnTopbar']}; }}"
+                f"QPushButton:hover {{ border-color: {t['accent']}; "
+                f"color: {t['textInverse']}; }}"
+            )
 
 
 def main():
     """Application entry point."""
+    import pyqtgraph as pg
+    pg.setConfigOptions(antialias=False, useOpenGL=False)
+
     app = QApplication(sys.argv)
     apply_theme(app, LIGHT_THEME)
 

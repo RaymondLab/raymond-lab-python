@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 
 from ..widgets.badge import Badge
+from ..widgets.flow_layout import FlowLayout
 
 
 # Metadata field definitions: (key, label, required, auto_key, widget_type, width, options)
@@ -58,15 +59,22 @@ class W2Screen(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        # ── Control bar ──
+        # ── Control bar (includes Back, Save To, remaining counter, Start) ──
         ctrl = QFrame()
+        ctrl.setObjectName("w1ControlBar")
         ctrl_layout = QHBoxLayout(ctrl)
         ctrl_layout.setContentsMargins(12, 8, 12, 8)
         ctrl_layout.setSpacing(8)
 
-        self._save_label = QLabel("SAVE TO:")
-        self._save_label.setStyleSheet("font-size: 10px; font-weight: 700;")
-        ctrl_layout.addWidget(self._save_label)
+        self._back_btn = QPushButton("\u2190 Back")
+        self._back_btn.clicked.connect(self._on_back)
+        ctrl_layout.addWidget(self._back_btn)
+
+        save_label = QLabel("SAVE TO:")
+        save_label.setStyleSheet(
+            "font-size: 10px; font-weight: 700; letter-spacing: 0.06em;"
+        )
+        ctrl_layout.addWidget(save_label)
 
         save_browse = QPushButton("Browse")
         save_browse.setProperty("small", True)
@@ -106,15 +114,10 @@ class W2Screen(QWidget):
 
         for section_title, fields in _FIELDS.items():
             group = QGroupBox(section_title)
-            group_layout = QHBoxLayout()
-            group_layout.setContentsMargins(8, 6, 8, 6)
-            group_layout.setSpacing(7)
+            group_inner = QVBoxLayout(group)
+            group_inner.setContentsMargins(8, 10, 8, 6)
 
-            # Use a flow-like layout via wrapping QHBoxLayout in a QWidget
-            flow = QWidget()
-            flow_layout = QHBoxLayout(flow)
-            flow_layout.setContentsMargins(0, 0, 0, 0)
-            flow_layout.setSpacing(7)
+            flow = FlowLayout(h_spacing=7, v_spacing=7)
 
             for key, label, required, auto_key, wtype, width, options in fields:
                 field_container = QWidget()
@@ -127,7 +130,6 @@ class W2Screen(QWidget):
                 label_row.setContentsMargins(0, 0, 0, 0)
                 label_row.setSpacing(3)
 
-                label_text = ""
                 if required:
                     label_text = f"<span style='color:#3E6E8C;font-weight:800;'>*</span> {label}"
                 else:
@@ -161,12 +163,11 @@ class W2Screen(QWidget):
                     )
 
                 field_layout.addWidget(widget)
-                flow_layout.addWidget(field_container)
+                field_container.setFixedWidth(width + 10)
+                flow.addWidget(field_container)
                 self._field_widgets[key] = (widget, wtype, required, auto_key)
 
-            flow_layout.addStretch()
-            group.setLayout(QVBoxLayout())
-            group.layout().addWidget(flow)
+            group_inner.addLayout(flow)
             form_layout.addWidget(group)
 
         form_layout.addStretch()
@@ -178,6 +179,9 @@ class W2Screen(QWidget):
 
         # Initial update
         self._update_remaining()
+
+    def _on_back(self):
+        self.state.wizard_step = 1
 
     def _on_session_loaded(self, session_data):
         """Auto-populate fields from session metadata_defaults."""

@@ -126,9 +126,11 @@ class A3Screen(QWidget):
         self._scatter_plot.getAxis("left").setPen(pg.mkPen(theme["border"]))
         self._scatter_plot.getAxis("bottom").setTextPen(pg.mkPen(theme["textTertiary"]))
         self._scatter_plot.getAxis("left").setTextPen(pg.mkPen(theme["textTertiary"]))
-        self._scatter_plot.showGrid(x=True, y=True, alpha=0.1)
+        self._scatter_plot.showGrid(x=True, y=True, alpha=0.05)
         self._scatter_plot.setLabel("bottom", "Block #")
-        self._scatter_plot.addLegend(offset=(-10, 10))
+        legend = self._scatter_plot.addLegend(offset=(-10, 10))
+        legend.setBrush(pg.mkBrush(255, 255, 255, 160))
+        legend.setPen(pg.mkPen(theme["border"], width=0.5))
 
         self._prepost_scatter = pg.ScatterPlotItem(
             size=10, pen=pg.mkPen(None),

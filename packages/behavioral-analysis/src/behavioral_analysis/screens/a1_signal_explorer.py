@@ -1,5 +1,7 @@
 """A1: Signal Explorer — calibration, block signals, real-time parameter tuning."""
 
+import numpy as np
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QFrame, QSplitter, QGroupBox, QLineEdit,
@@ -23,7 +25,9 @@ class A1Screen(QWidget):
     def __init__(self, state, parent=None):
         super().__init__(parent)
         self.state = state
-        self._saccade_regions = []
+        self._stale = False
+        self._saccade_region_pool = []  # pre-allocated LinearRegionItems
+        self._saccade_pool_size = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 4)
@@ -33,6 +37,12 @@ class A1Screen(QWidget):
         self._calib_group = QGroupBox("Calibration")
         self._calib_group.setCheckable(True)
         self._calib_group.setChecked(False)
+        self._calib_group.setStyleSheet(
+            "QGroupBox { background-color: #EFF4F8; "
+            "border: 1px solid rgba(62, 110, 140, 0.25); border-radius: 3px; }"
+            "QGroupBox::title { color: #2E5A74; font-weight: 700; "
+            "text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; }"
+        )
         calib_layout = QVBoxLayout(self._calib_group)
         calib_layout.setContentsMargins(8, 4, 8, 4)
         calib_layout.setSpacing(4)
@@ -91,6 +101,7 @@ class A1Screen(QWidget):
         # Eye Position plot
         self._pos_plot = self._make_plot(theme)
         self._pos_plot.setTitle("Eye Position", size="10pt")
+        self._pos_plot.setLabel("left", "Position (deg)")
         self._pos_raw = self._pos_plot.plot(
             pen=pg.mkPen(theme["dataRaw"], width=1), name="Raw"
         )
@@ -105,6 +116,7 @@ class A1Screen(QWidget):
         # Eye Velocity plot
         self._vel_plot = self._make_plot(theme)
         self._vel_plot.setTitle("Eye Velocity", size="10pt")
+        self._vel_plot.setLabel("left", "Velocity (deg/s)")
         self._vel_stim = self._vel_plot.plot(
             pen=pg.mkPen(theme["dataStimulus"], width=1, style=Qt.DashLine),
             name="Stimulus",
@@ -136,9 +148,7 @@ class A1Screen(QWidget):
         filter_section = QVBoxLayout()
         filter_section.setSpacing(2)
         filter_header = QLabel("POSITION FILTER")
-        filter_header.setStyleSheet(
-            "font-size: 10px; font-weight: 700; letter-spacing: 0.06em;"
-        )
+        filter_header.setObjectName("sectionHeader")
         filter_section.addWidget(filter_header)
 
         filter_row = QHBoxLayout()
@@ -169,9 +179,7 @@ class A1Screen(QWidget):
         diff_section = QVBoxLayout()
         diff_section.setSpacing(2)
         diff_header = QLabel("DIFFERENTIATION")
-        diff_header.setStyleSheet(
-            "font-size: 10px; font-weight: 700; letter-spacing: 0.06em;"
-        )
+        diff_header.setObjectName("sectionHeader")
         diff_section.addWidget(diff_header)
 
         self._sg_slider = ParameterSlider(
@@ -191,9 +199,7 @@ class A1Screen(QWidget):
         sac_section = QVBoxLayout()
         sac_section.setSpacing(2)
         sac_header = QLabel("SACCADE DETECTION")
-        sac_header.setStyleSheet(
-            "font-size: 10px; font-weight: 700; letter-spacing: 0.06em;"
-        )
+        sac_header.setObjectName("sectionHeader")
         sac_section.addWidget(sac_header)
 
         sac_row = QHBoxLayout()
@@ -221,8 +227,9 @@ class A1Screen(QWidget):
 
         # ── Wire state signals ──
         self.state.selected_block_changed.connect(self._sync_block_nav)
-        self.state.parameters_changed.connect(self._recompute)
+        self.state.parameters_changed.connect(self._on_params_changed)
         self.state.session_data_changed.connect(self._on_session_loaded)
+        self.state.workspace_tab_changed.connect(self._on_tab_switch)
 
         # Bidirectional sync from state to sliders
         self.state.lp_cutoff_hz_changed.connect(self._sync_lp)
@@ -230,6 +237,19 @@ class A1Screen(QWidget):
         self.state.saccade_threshold_changed.connect(self._sync_sac)
         self.state.filter_method_changed.connect(self._sync_filter_method)
         self.state.saccade_method_changed.connect(self._sync_sac_method)
+
+    # ── Visibility-gated recompute ──
+
+    def _on_params_changed(self):
+        if self.isVisible():
+            self._recompute()
+        else:
+            self._stale = True
+
+    def _on_tab_switch(self, tab):
+        if tab == "A1" and self._stale:
+            self._recompute()
+            self._stale = False
 
     # ── Helpers ──
 
@@ -240,8 +260,14 @@ class A1Screen(QWidget):
         pw.getAxis("left").setPen(pg.mkPen(theme["border"]))
         pw.getAxis("bottom").setTextPen(pg.mkPen(theme["textTertiary"]))
         pw.getAxis("left").setTextPen(pg.mkPen(theme["textTertiary"]))
-        pw.showGrid(x=True, y=True, alpha=0.1)
-        pw.addLegend(offset=(10, 10))
+        pw.showGrid(x=True, y=True, alpha=0.05)
+        pw.setLabel("bottom", "Time (s)")
+        pw.setClipToView(True)
+        pw.setDownsampling(mode="peak")
+        # Semi-transparent legend background
+        legend = pw.addLegend(offset=(10, 10))
+        legend.setBrush(pg.mkBrush(255, 255, 255, 160))
+        legend.setPen(pg.mkPen(theme["border"], width=0.5))
         return pw
 
     def _make_divider(self):
@@ -301,6 +327,10 @@ class A1Screen(QWidget):
         block_index = self.state.selected_block
         data = stubs.process_block(session, block_index, params)
 
+        # Batch all plot updates to avoid redundant repaints
+        self._pos_plot.setUpdatesEnabled(False)
+        self._vel_plot.setUpdatesEnabled(False)
+
         t = data["time"]
         mask = data["saccade_mask"]
 
@@ -322,14 +352,13 @@ class A1Screen(QWidget):
         sac_vel[~mask] = float("nan")
         self._vel_saccade.setData(t, sac_vel, connect="finite")
 
-        # Saccade region shading
-        self._clear_saccade_regions()
+        # Saccade region shading (reuse pooled items)
         theme = DARK_THEME if self.state.dark_mode else LIGHT_THEME
         sac_color = QColor(theme["dataSaccade"])
         sac_color.setAlphaF(0.07)
+        sac_brush = pg.mkBrush(sac_color)
 
         # Find contiguous saccade regions
-        import numpy as np
         diff = np.diff(mask.astype(int))
         starts = np.where(diff == 1)[0] + 1
         ends = np.where(diff == -1)[0] + 1
@@ -338,21 +367,37 @@ class A1Screen(QWidget):
         if mask[-1]:
             ends = np.concatenate([ends, [len(mask)]])
 
-        for s, e in zip(starts, ends):
-            for pw in (self._pos_plot, self._vel_plot):
-                region = pg.LinearRegionItem(
-                    values=[t[s], t[min(e, len(t) - 1)]],
-                    movable=False,
-                    brush=pg.mkBrush(sac_color),
-                )
-                region.setZValue(-5)
-                pw.addItem(region)
-                self._saccade_regions.append((pw, region))
+        num_regions = len(starts)
+        needed = num_regions * 2  # 2 plots per region
 
-    def _clear_saccade_regions(self):
-        for pw, region in self._saccade_regions:
-            pw.removeItem(region)
-        self._saccade_regions.clear()
+        # Grow pool if needed
+        while len(self._saccade_region_pool) < needed:
+            pw = self._pos_plot if len(self._saccade_region_pool) % 2 == 0 else self._vel_plot
+            region = pg.LinearRegionItem(values=[0, 0], movable=False, brush=sac_brush)
+            region.setZValue(-5)
+            region.setVisible(False)
+            pw.addItem(region)
+            self._saccade_region_pool.append((pw, region))
+
+        # Update visible regions
+        idx = 0
+        for s, e in zip(starts, ends):
+            vals = [t[s], t[min(e, len(t) - 1)]]
+            for pw_idx in range(2):
+                _, region = self._saccade_region_pool[idx]
+                region.setRegion(vals)
+                region.setBrush(sac_brush)
+                region.setVisible(True)
+                idx += 1
+
+        # Hide unused pool items
+        for i in range(idx, len(self._saccade_region_pool)):
+            self._saccade_region_pool[i][1].setVisible(False)
+        self._saccade_pool_size = idx
+
+        # Re-enable painting and trigger single repaint
+        self._pos_plot.setUpdatesEnabled(True)
+        self._vel_plot.setUpdatesEnabled(True)
 
     # ── Bidirectional sync ──
 
@@ -376,11 +421,34 @@ class A1Screen(QWidget):
         self._sac_combo.blockSignals(False)
 
     def retheme(self, theme):
-        """Update plot styling when theme changes."""
+        """Update plot styling when theme changes — no data recomputation."""
         for pw in (self._pos_plot, self._vel_plot):
             pw.setBackground(theme["bgPlot"])
             pw.getAxis("bottom").setPen(pg.mkPen(theme["border"]))
             pw.getAxis("left").setPen(pg.mkPen(theme["border"]))
             pw.getAxis("bottom").setTextPen(pg.mkPen(theme["textTertiary"]))
             pw.getAxis("left").setTextPen(pg.mkPen(theme["textTertiary"]))
-        self._recompute()
+
+        # Update trace pen colors
+        self._pos_raw.setPen(pg.mkPen(theme["dataRaw"], width=1))
+        self._pos_filtered.setPen(pg.mkPen(theme["dataPosition"], width=2))
+        self._pos_saccade.setPen(pg.mkPen(theme["dataSaccade"], width=1.5))
+        self._vel_stim.setPen(pg.mkPen(theme["dataStimulus"], width=1, style=Qt.DashLine))
+        self._vel_raw.setPen(pg.mkPen(theme["dataRaw"], width=1))
+        self._vel_filtered.setPen(pg.mkPen(theme["dataVelocity"], width=2))
+        self._vel_saccade.setPen(pg.mkPen(theme["dataSaccade"], width=1.5))
+
+        # Update saccade region brush colors in-place
+        sac_color = QColor(theme["dataSaccade"])
+        sac_color.setAlphaF(0.07)
+        sac_brush = pg.mkBrush(sac_color)
+        for i in range(self._saccade_pool_size):
+            self._saccade_region_pool[i][1].setBrush(sac_brush)
+
+        # Update calibration section tinting
+        self._calib_group.setStyleSheet(
+            f"QGroupBox {{ background-color: {theme['bgCalibration']}; "
+            f"border: 1px solid rgba(62, 110, 140, 0.25); border-radius: 3px; }}"
+            f"QGroupBox::title {{ color: {theme['accentText']}; font-weight: 700; "
+            f"text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; }}"
+        )

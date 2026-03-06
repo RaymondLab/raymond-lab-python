@@ -3,7 +3,7 @@
 import numpy as np
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QFrame, QSplitter, QGroupBox,
 )
 from PySide6.QtCore import Qt
@@ -14,6 +14,7 @@ from ..analysis import stubs
 from ..themes import LIGHT_THEME, DARK_THEME
 from ..widgets.block_navigator import BlockNavigator
 from ..widgets.cycle_navigator import CycleNavigator
+from ..widgets.segmented_control import SegmentedControl
 
 
 class A2Screen(QWidget):
@@ -24,7 +25,9 @@ class A2Screen(QWidget):
         self.state = state
         self._cycle_data = None
         self._metrics = None
-        self._cycle_trace_items = []
+        self._cycle_trace_pool = []  # pre-allocated PlotDataItems for cycle traces
+        self._cycle_pool_used = 0
+        self._stale = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 4)
@@ -42,9 +45,7 @@ class A2Screen(QWidget):
         cycle_layout.setSpacing(8)
 
         cycle_label = QLabel("CYCLES:")
-        cycle_label.setStyleSheet(
-            "font-size: 10px; font-weight: 700; letter-spacing: 0.06em;"
-        )
+        cycle_label.setObjectName("sectionHeader")
         cycle_layout.addWidget(cycle_label)
 
         self._cycle_nav = CycleNavigator()
@@ -61,15 +62,14 @@ class A2Screen(QWidget):
             lbl.setStyleSheet("font-size: 9px;")
             cycle_layout.addWidget(lbl)
 
-        # Display mode toggle
-        self._mode_buttons = {}
-        for mode in ["SEM", "All Cycles", "Good Cycles"]:
-            btn = QPushButton(mode)
-            btn.setCheckable(True)
-            btn.setStyleSheet("font-size: 10px; padding: 2px 8px;")
-            btn.clicked.connect(lambda _, m=mode: self._on_mode_changed(m))
-            self._mode_buttons[mode] = btn
-            cycle_layout.addWidget(btn)
+        # Display mode segmented control
+        self._mode_control = SegmentedControl([
+            ("SEM", "SEM"),
+            ("All Cycles", "All Cycles"),
+            ("Good Cycles", "Good Cycles"),
+        ])
+        self._mode_control.selection_changed.connect(self._on_mode_changed)
+        cycle_layout.addWidget(self._mode_control)
 
         layout.addWidget(cycle_row)
 
@@ -84,8 +84,16 @@ class A2Screen(QWidget):
         self._plot.getAxis("left").setPen(pg.mkPen(theme["border"]))
         self._plot.getAxis("bottom").setTextPen(pg.mkPen(theme["textTertiary"]))
         self._plot.getAxis("left").setTextPen(pg.mkPen(theme["textTertiary"]))
-        self._plot.showGrid(x=True, y=True, alpha=0.1)
-        self._plot.addLegend(offset=(10, 10))
+        self._plot.showGrid(x=True, y=True, alpha=0.05)
+        self._plot.setClipToView(True)
+        self._plot.setDownsampling(mode="peak")
+        self._plot.setLabel("bottom", "Time (s)")
+        self._plot.setLabel("left", "Eye Position (deg)")
+
+        # Semi-transparent legend background
+        legend = self._plot.addLegend(offset=(10, 10))
+        legend.setBrush(pg.mkBrush(255, 255, 255, 160))
+        legend.setPen(pg.mkPen(theme["border"], width=0.5))
 
         # Persistent trace items for SEM mode
         self._stim_curve = self._plot.plot(
@@ -126,7 +134,7 @@ class A2Screen(QWidget):
             lbl.setStyleSheet("font-size: 11px;")
             row.addWidget(lbl)
             row.addStretch()
-            val = QLabel("—")
+            val = QLabel("\u2014")
             val.setStyleSheet(
                 "font-family: 'Consolas','SF Mono','Menlo',monospace; "
                 "font-size: 11px; font-weight: 600;"
@@ -143,12 +151,26 @@ class A2Screen(QWidget):
 
         # ── Wire state signals ──
         self.state.selected_block_changed.connect(self._sync_block)
-        self.state.parameters_changed.connect(self._recompute)
+        self.state.parameters_changed.connect(self._on_params_changed)
         self.state.session_data_changed.connect(self._on_session_loaded)
-        self.state.display_mode_changed.connect(self._sync_mode_buttons)
+        self.state.display_mode_changed.connect(self._sync_mode)
+        self.state.workspace_tab_changed.connect(self._on_tab_switch)
 
         # Initial mode
-        self._sync_mode_buttons(self.state.display_mode)
+        self._sync_mode(self.state.display_mode)
+
+    # ── Visibility-gated recompute ──
+
+    def _on_params_changed(self):
+        if self.isVisible():
+            self._recompute()
+        else:
+            self._stale = True
+
+    def _on_tab_switch(self, tab):
+        if tab == "A2" and self._stale:
+            self._recompute()
+            self._stale = False
 
     # ── Actions ──
 
@@ -175,11 +197,8 @@ class A2Screen(QWidget):
     def _on_mode_changed(self, mode):
         self.state.display_mode = mode
 
-    def _sync_mode_buttons(self, mode):
-        for m, btn in self._mode_buttons.items():
-            btn.blockSignals(True)
-            btn.setChecked(m == mode)
-            btn.blockSignals(False)
+    def _sync_mode(self, mode):
+        self._mode_control.set_selected(mode)
         self._update_plot()
 
     def _recompute(self):
@@ -231,12 +250,17 @@ class A2Screen(QWidget):
         if self._cycle_data is None:
             return
 
+        self._plot.setUpdatesEnabled(False)
+
         cd = self._cycle_data
         mode = self.state.display_mode
         theme = DARK_THEME if self.state.dark_mode else LIGHT_THEME
 
-        # Clear dynamic items
-        self._clear_cycle_traces()
+        # Hide cycle trace pool items
+        for j in range(self._cycle_pool_used):
+            self._cycle_trace_pool[j].setVisible(False)
+        self._cycle_pool_used = 0
+
         if self._sem_fill is not None:
             self._plot.removeItem(self._sem_fill)
             self._sem_fill = None
@@ -273,35 +297,41 @@ class A2Screen(QWidget):
             selected = self.state.selected_cycle
             traces = cd["cycle_traces"]
 
+            faded_pen = pg.mkPen(theme["dataVelocity"], width=1)
+            faded_pen.setColor(pg.mkColor(
+                faded_pen.color().red(), faded_pen.color().green(),
+                faded_pen.color().blue(), 50
+            ))
+            selected_pen = pg.mkPen(theme["dataVelocity"], width=2)
+
+            pool_idx = 0
             for i in range(len(quality)):
                 if mode == "Good Cycles" and not quality[i]:
                     continue
-                if i == selected:
-                    continue  # draw selected last
-                pen = pg.mkPen(theme["dataVelocity"], width=1)
-                pen.setColor(pg.mkColor(
-                    pen.color().red(), pen.color().green(),
-                    pen.color().blue(), 50
-                ))
-                item = self._plot.plot(t, traces[i], pen=pen)
-                self._cycle_trace_items.append(item)
+                pen = selected_pen if i == selected else faded_pen
+                item = self._get_cycle_trace_item(pool_idx)
+                item.setData(t, traces[i])
+                item.setPen(pen)
+                item.setVisible(True)
+                # Move selected trace to top by setting higher Z
+                item.setZValue(10 if i == selected else 0)
+                pool_idx += 1
 
-            # Draw selected cycle on top
-            if 0 <= selected < len(traces):
-                show = True
-                if mode == "Good Cycles" and not quality[selected]:
-                    show = False
-                if show:
-                    item = self._plot.plot(
-                        t, traces[selected],
-                        pen=pg.mkPen(theme["dataVelocity"], width=2),
-                    )
-                    self._cycle_trace_items.append(item)
+            # Hide unused pool items
+            for j in range(pool_idx, len(self._cycle_trace_pool)):
+                self._cycle_trace_pool[j].setVisible(False)
+            self._cycle_pool_used = pool_idx
 
-    def _clear_cycle_traces(self):
-        for item in self._cycle_trace_items:
-            self._plot.removeItem(item)
-        self._cycle_trace_items.clear()
+        self._plot.setUpdatesEnabled(True)
+
+    def _get_cycle_trace_item(self, idx):
+        """Get or create a PlotDataItem from the pool."""
+        while idx >= len(self._cycle_trace_pool):
+            item = pg.PlotDataItem()
+            item.setVisible(False)
+            self._plot.addItem(item)
+            self._cycle_trace_pool.append(item)
+        return self._cycle_trace_pool[idx]
 
     def retheme(self, theme):
         self._plot.setBackground(theme["bgPlot"])
@@ -309,4 +339,14 @@ class A2Screen(QWidget):
         self._plot.getAxis("left").setPen(pg.mkPen(theme["border"]))
         self._plot.getAxis("bottom").setTextPen(pg.mkPen(theme["textTertiary"]))
         self._plot.getAxis("left").setTextPen(pg.mkPen(theme["textTertiary"]))
+
+        # Update mode control theme
+        self._mode_control.set_theme(
+            active_bg=theme["accent"],
+            active_fg=theme["textInverse"],
+            inactive_bg=theme["bgPanel"],
+            inactive_fg=theme["textTertiary"],
+            border=theme["border"],
+        )
+
         self._update_plot()
