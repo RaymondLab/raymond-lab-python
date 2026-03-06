@@ -1,0 +1,17 @@
+[project]
+name = "behavioral-analysis"
+version = "0.1.0"
+description = "GUI tool for analyzing behavioral experiment data (VOR, OKR)"
+readme = "README.md"
+requires-python = ">=3.9,<3.10"
+dependencies = [
+    "raymond-lab-core",
+    "PySide6",
+    "pyqtgraph",
+]
+
+[project.scripts]
+behavioral-analysis = "behavioral_analysis.app:main"
+
+[tool.uv.sources]
+raymond-lab-core = { workspace = true }
