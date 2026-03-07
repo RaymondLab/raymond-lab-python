@@ -1,6 +1,6 @@
-"""Light and dark theme color dictionaries and QSS stylesheet generation."""
+"""Light-mode theme color dictionary and QSS stylesheet generation."""
 
-LIGHT_THEME = {
+THEME = {
     # UI Chrome
     "bgApp": "#E8ECF0",
     "bgPanel": "#FFFFFF",
@@ -44,58 +44,6 @@ LIGHT_THEME = {
     "qualWarn": "#D4930D",
     "qualBad": "#CF2C2C",
     "qualSelected": "#2D5FD4",
-    # Typography tokens
-    "fontMono": "'Consolas', 'SF Mono', 'Menlo', monospace",
-    "fontXs": "9px",
-    "fontSm": "11px",
-    "fontMd": "12px",
-    "fontLg": "14px",
-}
-
-DARK_THEME = {
-    # UI Chrome
-    "bgApp": "#141A22",
-    "bgPanel": "#1C2430",
-    "bgPanelAlt": "#18202A",
-    "bgInput": "#243040",
-    "bgTopbar": "#0E1418",
-    "bgTabActive": "#508CB0",
-    "bgTabInactive": "#243040",
-    "bgCalibration": "#1A2430",
-    "bgParamBar": "#18202A",
-    "bgPlot": "#141C26",
-    # Borders
-    "border": "#304050",
-    "borderLight": "#243040",
-    "borderFocus": "#508CB0",
-    # Text
-    "textPrimary": "#DEE4EA",
-    "textSecondary": "#90A0B0",
-    "textTertiary": "#607080",
-    "textInverse": "#141A22",
-    "textOnTopbar": "#8094A8",
-    # Accent
-    "accent": "#508CB0",
-    "accentDark": "#3E7898",
-    "accentLight": "#1A2C3C",
-    "accentText": "#70A8CA",
-    # Signal trace colors
-    "dataPosition": "#F0923C",
-    "dataVelocity": "#6BA3F5",
-    "dataSaccade": "#F06B6B",
-    "dataStimulus": "#607080",
-    "dataFit": "#DEE4EA",
-    "dataRaw": "#3A4858",
-    "dataSem": "#1A2E48",
-    # Block & quality colors
-    "blockPrepost": "#3BD48A",
-    "blockPrepostBg": "#0F3028",
-    "blockTrain": "#F27088",
-    "blockTrainBg": "#3A1422",
-    "qualGood": "#2ED06A",
-    "qualWarn": "#F0B030",
-    "qualBad": "#F06B6B",
-    "qualSelected": "#6BA3F5",
     # Typography tokens
     "fontMono": "'Consolas', 'SF Mono', 'Menlo', monospace",
     "fontXs": "9px",
@@ -334,10 +282,6 @@ def generate_stylesheet(theme):
         letter-spacing: 0.06em;
         color: {t['textTertiary']};
     }}
-    #settingsPanel {{
-        border-left: 2px solid {t['border']};
-        background-color: {t['bgPanel']};
-    }}
     [monospace="true"] {{
         font-family: {t['fontMono']};
     }}
@@ -347,13 +291,49 @@ def generate_stylesheet(theme):
         border-radius: 3px;
     }}
     #w1ControlBar {{
-        background-color: {t['bgPanel']};
-        border: 1px solid {t['border']};
+        background-color: {t['bgTopbar']};
+        border: 1px solid {t['bgTopbar']};
         border-radius: 3px;
+    }}
+    #w1ControlBar QLabel {{
+        color: {t['textOnTopbar']};
+    }}
+    #w1ControlBar QLineEdit {{
+        background-color: {t['bgTabInactive']};
+        border: 1px solid rgba(255,255,255,0.15);
+        color: {t['textInverse']};
+    }}
+    #w1ControlBar QLineEdit:focus {{
+        border-color: {t['bgTabActive']};
+    }}
+    #w1ControlBar QComboBox {{
+        background-color: {t['bgTabInactive']};
+        border: 1px solid rgba(255,255,255,0.15);
+        color: {t['textInverse']};
+    }}
+    #w1ControlBar QPushButton {{
+        background-color: transparent;
+        border: 1px solid rgba(255,255,255,0.2);
+        color: {t['textOnTopbar']};
+    }}
+    #w1ControlBar QPushButton:hover {{
+        border-color: rgba(255,255,255,0.4);
+        color: {t['textInverse']};
+    }}
+    #w1ControlBar QPushButton[primary="true"] {{
+        background-color: {t['bgTabActive']};
+        border: 1px solid {t['accent']};
+        color: {t['textInverse']};
+    }}
+    #w1ControlBar QPushButton[primary="true"]:hover {{
+        background-color: {t['accent']};
+    }}
+    #w1ControlBar QPushButton[primary="true"]:disabled {{
+        opacity: 0.4;
     }}
     """
 
 
-def apply_theme(app, theme):
-    """Apply a theme to the QApplication by generating and setting the stylesheet."""
-    app.setStyleSheet(generate_stylesheet(theme))
+def apply_theme(app):
+    """Apply the light theme stylesheet to the QApplication."""
+    app.setStyleSheet(generate_stylesheet(THEME))

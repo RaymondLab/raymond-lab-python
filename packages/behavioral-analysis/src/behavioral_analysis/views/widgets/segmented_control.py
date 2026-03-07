@@ -97,7 +97,7 @@ class SegmentedControl(QWidget):
         bd = self._border
 
         base = (
-            f"font-size: 11px; padding: 5px 14px; "
+            f"font-size: 11px; padding: 5px 18px; "
             f"border: 1px solid {bd};"
         )
 

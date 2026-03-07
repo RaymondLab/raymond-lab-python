@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-behavioral-analysis = "behavioral_analysis.app:main"
+behavioral-analysis = "behavioral_analysis.views.main_window:main"
 
 [tool.uv.sources]
 raymond-lab-core = { workspace = true }

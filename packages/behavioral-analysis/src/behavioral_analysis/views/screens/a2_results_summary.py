@@ -1,4 +1,4 @@
-"""A3: Results Summary — scatter plot, results table, export."""
+"""A2: Results Summary — scatter plot, results table, export."""
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -9,9 +9,7 @@ from PySide6.QtGui import QColor
 
 import pyqtgraph as pg
 
-from ..analysis import stubs
-from ..themes import LIGHT_THEME, DARK_THEME
-
+from ...themes import THEME
 
 _METRIC_OPTIONS = [
     ("Gain", "gain"),
@@ -29,7 +27,6 @@ _TABLE_COLUMNS = [
 
 
 class _ResultsTableModel(QAbstractTableModel):
-    """Table model for results summary."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -37,7 +34,7 @@ class _ResultsTableModel(QAbstractTableModel):
 
     def set_data(self, data):
         self.beginResetModel()
-        self._data = data
+        self._data = data or []
         self.endResetModel()
 
     def rowCount(self, parent=QModelIndex()):
@@ -83,8 +80,8 @@ class _ResultsTableModel(QAbstractTableModel):
 
         elif role == Qt.ForegroundRole and col == 1:
             if row["block_type"] in ("pre", "post"):
-                return QColor("#0F8A5F")
-            return QColor("#CF2C4A")
+                return QColor(THEME["blockPrepost"])
+            return QColor(THEME["blockTrain"])
 
         elif role == Qt.TextAlignmentRole and col >= 2:
             return Qt.AlignRight | Qt.AlignVCenter
@@ -92,14 +89,13 @@ class _ResultsTableModel(QAbstractTableModel):
         return None
 
 
-class A3Screen(QWidget):
+class A2Screen(QWidget):
     """Workspace Tab: Results Summary."""
 
-    def __init__(self, state, parent=None):
+    def __init__(self, vm, parent=None):
         super().__init__(parent)
-        self.state = state
+        self.vm = vm
         self._results = None
-        self._stale = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 4)
@@ -118,23 +114,22 @@ class A3Screen(QWidget):
         layout.addLayout(selector_row)
 
         # ── Scatter plot ──
-        theme = LIGHT_THEME
         self._scatter_plot = pg.PlotWidget()
         self._scatter_plot.setFixedHeight(175)
-        self._scatter_plot.setBackground(theme["bgPlot"])
-        self._scatter_plot.getAxis("bottom").setPen(pg.mkPen(theme["border"]))
-        self._scatter_plot.getAxis("left").setPen(pg.mkPen(theme["border"]))
-        self._scatter_plot.getAxis("bottom").setTextPen(pg.mkPen(theme["textTertiary"]))
-        self._scatter_plot.getAxis("left").setTextPen(pg.mkPen(theme["textTertiary"]))
+        self._scatter_plot.setBackground(THEME["bgPlot"])
+        self._scatter_plot.getAxis("bottom").setPen(pg.mkPen(THEME["border"]))
+        self._scatter_plot.getAxis("left").setPen(pg.mkPen(THEME["border"]))
+        self._scatter_plot.getAxis("bottom").setTextPen(pg.mkPen(THEME["textTertiary"]))
+        self._scatter_plot.getAxis("left").setTextPen(pg.mkPen(THEME["textTertiary"]))
         self._scatter_plot.showGrid(x=True, y=True, alpha=0.05)
         self._scatter_plot.setLabel("bottom", "Block #")
         legend = self._scatter_plot.addLegend(offset=(-10, 10))
         legend.setBrush(pg.mkBrush(255, 255, 255, 160))
-        legend.setPen(pg.mkPen(theme["border"], width=0.5))
+        legend.setPen(pg.mkPen(THEME["border"], width=0.5))
 
         self._prepost_scatter = pg.ScatterPlotItem(
             size=10, pen=pg.mkPen(None),
-            brush=pg.mkBrush(theme["blockPrepost"]),
+            brush=pg.mkBrush(THEME["blockPrepost"]),
             name="Pre/Post",
         )
         self._prepost_scatter.sigClicked.connect(self._on_scatter_clicked)
@@ -143,9 +138,9 @@ class A3Screen(QWidget):
         self._train_scatter = pg.ScatterPlotItem(
             size=7, pen=pg.mkPen(None),
             brush=pg.mkBrush(
-                QColor(theme["blockTrain"]).red(),
-                QColor(theme["blockTrain"]).green(),
-                QColor(theme["blockTrain"]).blue(),
+                QColor(THEME["blockTrain"]).red(),
+                QColor(THEME["blockTrain"]).green(),
+                QColor(THEME["blockTrain"]).blue(),
                 140,
             ),
             name="Training",
@@ -168,8 +163,8 @@ class A3Screen(QWidget):
             QHeaderView.ResizeToContents
         )
         self._table_view.setStyleSheet(
-            "QTableView { font-family: 'Consolas','SF Mono','Menlo',monospace; "
-            "font-size: 11px; }"
+            f"QTableView {{ font-family: {THEME['fontMono']}; "
+            f"font-size: {THEME['fontSm']}; }}"
         )
         self._table_view.clicked.connect(self._on_table_clicked)
         layout.addWidget(self._table_view, 1)
@@ -196,33 +191,20 @@ class A3Screen(QWidget):
 
         layout.addWidget(export_bar)
 
-        # ── Wire state signals ──
-        self.state.parameters_changed.connect(self._mark_stale)
-        self.state.session_data_changed.connect(self._mark_stale)
-        self.state.workspace_tab_changed.connect(self._on_tab_switch)
-        self.state.selected_block_changed.connect(self._highlight_row)
-
-    # ── Lazy computation ──
-
-    def _mark_stale(self, *_):
-        self._stale = True
+        # ── Wire VM signals ──
+        self.vm.selected_block_changed.connect(self._highlight_row)
+        self.vm.all_results_recomputed.connect(self._on_results_ready)
+        self.vm.workspace_tab_changed.connect(self._on_tab_switch)
 
     def _on_tab_switch(self, tab):
-        if tab == "A3" and self._stale:
-            self._recompute()
+        if tab == "A2":
+            self.vm._ensure_all_results_computed()
 
-    def _recompute(self):
-        session = self.state.session_data
-        if session is None:
-            return
-
-        params = self.state.current_params()
-        self._results = stubs.compute_all_results(session, params)
-        self._stale = False
-
+    def _on_results_ready(self):
+        self._results = self.vm.data.all_results
         self._table_model.set_data(self._results)
         self._update_scatter()
-        self._highlight_row(self.state.selected_block)
+        self._highlight_row(self.vm.selected_block)
 
     def _update_scatter(self):
         if not self._results:
@@ -250,18 +232,17 @@ class A3Screen(QWidget):
 
         self._prepost_scatter.setData(prepost_x, prepost_y)
         self._train_scatter.setData(train_x, train_y)
-
         self._scatter_plot.setLabel("left", _METRIC_OPTIONS[metric_idx][0])
 
     def _on_scatter_clicked(self, _, points):
         if points:
             block_num = int(points[0].pos().x())
-            self.state.selected_block = block_num - 1
+            self.vm.select_block(block_num - 1)
 
     def _on_table_clicked(self, index):
         row = index.row()
         if self._results and 0 <= row < len(self._results):
-            self.state.selected_block = self._results[row]["block_index"]
+            self.vm.select_block(self._results[row]["block_index"])
 
     def _highlight_row(self, block_index):
         if self._results:
@@ -274,25 +255,16 @@ class A3Screen(QWidget):
 
     def _export_excel(self):
         if self._results:
-            stubs.export_excel(self._results, self.state.file_path + "_results.xlsx")
+            self.vm.export_excel(self.vm.data.file_path + "_results.xlsx")
 
     def _export_figures(self):
         if self._results:
-            stubs.export_figures(self._results, self.state.file_path + "_figures.pdf")
+            self.vm.export_figures(self.vm.data.file_path + "_figures.pdf")
 
     def _export_workspace(self):
         if self._results:
-            stubs.export_workspace(self._results, self.state.file_path + "_workspace.mat")
+            self.vm.export_workspace(self.vm.data.file_path + "_workspace.mat")
 
     def _export_all(self):
-        self._export_excel()
-        self._export_figures()
-        self._export_workspace()
-
-    def retheme(self, theme):
-        self._scatter_plot.setBackground(theme["bgPlot"])
-        self._scatter_plot.getAxis("bottom").setPen(pg.mkPen(theme["border"]))
-        self._scatter_plot.getAxis("left").setPen(pg.mkPen(theme["border"]))
-        self._scatter_plot.getAxis("bottom").setTextPen(pg.mkPen(theme["textTertiary"]))
-        self._scatter_plot.getAxis("left").setTextPen(pg.mkPen(theme["textTertiary"]))
-        self._update_scatter()
+        if self._results:
+            self.vm.export_all(self.vm.data.file_path)

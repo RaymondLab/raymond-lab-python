@@ -6,43 +6,77 @@ This guide explains how to replace the mock data layer with real signal processi
 
 ## Architecture Overview
 
-```
-screens/           GUI screens — DO NOT MODIFY during backend integration
-  a1_signal_explorer.py   calls: process_block
-  a2_block_analysis.py    calls: compute_cycle_analysis, compute_block_metrics
-  a3_results_summary.py   calls: compute_all_results, export_*
-  w1_load_review.py       calls: load_experiment_file
-  s1_settings_panel.py    calls: (none — reads/writes state only)
+The GUI follows the MVVM (Model-View-ViewModel) pattern with a single `AnalysisViewModel` as the sole source of truth for application state.
 
-analysis/          Backend logic lives here
-  stubs.py         API boundary — screens import ONLY from here
-  mock_data.py     Mock generators (remove when fully replaced)
+```
+models/                Pure Python dataclasses — no Qt imports
+  session_model.py       SessionModel, AnalysisParams, BlockInfo, CalibrationData,
+                         MetadataFields, BlockResults
+
+viewmodels/            Single ViewModel — owns SessionModel, exposes signals
+  analysis_viewmodel.py  AnalysisViewModel(QObject) — calls stubs, caches results
+
+views/                 GUI screens — DO NOT MODIFY during backend integration
+  main_window.py         AnalysisWindow — wires wizard/workspace phases
+  screens/
+    w1_load_review.py    Wizard Step 1: calls load_experiment_file (via ViewModel)
+    w2_metadata_output.py Wizard Step 2: metadata form (reads/writes ViewModel only)
+    w3_signal_explorer.py Wizard Step 3: calls process_block (via ViewModel)
+    a1_block_analysis.py  Workspace Tab 1: calls compute_cycle_analysis,
+                                           compute_block_metrics (via ViewModel)
+    a2_results_summary.py Workspace Tab 2: calls compute_all_results, export_*
+                                           (via ViewModel)
+
+analysis/              Backend logic lives here
+  stubs.py               API boundary — ViewModel imports ONLY from here
+  mock_data.py           Mock generators (remove when fully replaced)
 
   # Add your real backend modules here:
-  file_loader.py       .smr/.smrx/.mat file parsing
-  filters.py           Butterworth, wavelet position filtering
-  differentiation.py   Savitzky-Golay velocity computation
-  saccade_detection.py SVT/STD/MAD saccade detection
-  cycle_analysis.py    Cycle averaging, SEM, sinusoidal fitting
-  calibration.py       Calibration file loading and scaling
-  export.py            Excel, PDF figures, MATLAB workspace export
+  file_loader.py         .smr/.smrx/.mat file parsing
+  filters.py             Butterworth, wavelet position filtering
+  differentiation.py     Savitzky-Golay velocity computation
+  saccade_detection.py   SVT/STD/MAD saccade detection
+  cycle_analysis.py      Cycle averaging, SEM, sinusoidal fitting
+  calibration.py         Calibration file loading and scaling
+  export.py              Excel, PDF figures, MATLAB workspace export
 ```
 
-The key rule: **screens only import from `stubs.py`**. Each stub function has a fixed signature and return structure. Replace the mock call inside each stub with real logic — the GUI will work unchanged as long as the return structure matches.
+### Data Flow
+
+```
+View (screens)  -->  AnalysisViewModel  -->  stubs.py  -->  your backend modules
+     ^                     |
+     |                     v
+     +--- reads via ---  SessionModel (cached results)
+```
+
+The key rules:
+- **Screens never call stubs directly.** All stub calls go through `AnalysisViewModel`.
+- **`AnalysisViewModel` only imports from `stubs.py`.** Each stub function has a fixed signature and return structure.
+- Replace the mock call inside each stub with real logic — the GUI will work unchanged as long as the return structure matches.
+
+### Navigation Flow
+
+The app has two phases:
+
+1. **Wizard** (3 linear steps): W1 Load & Review -> W2 Metadata & Output -> W3 Signal Explorer
+2. **Workspace** (2 tabs): A1 Block Analysis, A2 Results Summary
+
+Parameters are tuned in W3 (wizard) and locked during the workspace phase. The "Back to Signal Explorer" button in the workspace toolbar returns to W3 for re-tuning.
 
 ---
 
 ## The `params` Dict
 
-Several stub functions receive a `params` dict containing user-adjustable analysis parameters. It is produced by `AppState.current_params()` and always has these keys:
+Several stub functions receive a `params` dict containing user-adjustable analysis parameters. It is produced by `AnalysisParams.to_dict()` (defined in `models/session_model.py`) and always has these keys:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `lp_cutoff_hz` | `float` | 40.0 | Low-pass filter cutoff frequency (Hz) |
-| `sg_window_ms` | `float` | 30.0 | Savitzky-Golay window for differentiation (ms) |
-| `saccade_threshold` | `float` | 50.0 | Saccade velocity threshold (deg/s) |
-| `saccade_method` | `str` | "SVT" | Saccade detection method: "SVT", "STD", or "MAD" |
 | `filter_method` | `str` | "Butterworth" | Position filter method: "Butterworth" or "Wavelet" |
+| `lp_cutoff_hz` | `float` | 11.0 | Low-pass filter cutoff frequency (Hz) |
+| `sg_window_ms` | `float` | 11.0 | Savitzky-Golay window for differentiation (ms) |
+| `saccade_method` | `str` | "SVT" | Saccade detection method: "SVT", "STD", or "MAD" |
+| `saccade_threshold` | `float` | 1000.0 | Saccade velocity threshold (deg/s) |
 | `saccade_min_dur_ms` | `float` | 10.0 | Minimum saccade duration (ms) |
 | `saccade_padding_ms` | `float` | 5.0 | Padding around detected saccades (ms) |
 
@@ -52,7 +86,7 @@ Several stub functions receive a `params` dict containing user-adjustable analys
 
 ### 1. `load_experiment_file(path: str) -> dict`
 
-**Called by:** W1 (Load & Review) when the user browses for a file.
+**Called by:** `AnalysisViewModel.load_file()` when the user browses for a file in W1.
 
 **Input:** Absolute path to a `.smr`, `.smrx`, or `.mat` file.
 
@@ -139,7 +173,7 @@ These populate the W2 metadata form. Any key can be an empty string if unknown.
 
 ### 2. `apply_calibration(session: dict, calib_path: str) -> dict`
 
-**Called by:** A1 (Signal Explorer) when the user loads a calibration file.
+**Called by:** `AnalysisViewModel.load_calibration_file()` when the user loads a calibration file in W3.
 
 **Inputs:**
 - `session`: The session dict returned by `load_experiment_file`.
@@ -159,7 +193,7 @@ These populate the W2 metadata form. Any key can be an empty string if unknown.
 
 ### 3. `process_block(session: dict, block_index: int, params: dict) -> dict`
 
-**Called by:** A1 (Signal Explorer) — called on every parameter change and block selection. This is the most performance-sensitive function because sliders trigger it in real time (debounced at 80ms).
+**Called by:** `AnalysisViewModel._recompute_current_block()` — called on every parameter change (debounced at 80ms) and block selection change. This is the most performance-sensitive function.
 
 **Inputs:**
 - `session`: Session dict.
@@ -190,13 +224,13 @@ All arrays must have the same length `N` (typically `sample_rate * block_duratio
 4. Detect saccades (using `params["saccade_method"]`, `params["saccade_threshold"]`, `params["saccade_min_dur_ms"]`, `params["saccade_padding_ms"]`)
 5. Extract stimulus trace for the block
 
-**Performance note:** This function is called frequently during slider drags. Target < 50ms per call for smooth interaction. Consider caching intermediate results (e.g., cache the filtered position and only recompute velocity/saccades when only saccade params change).
+**Performance note:** This function is called frequently during parameter adjustments. The ViewModel debounces at 80ms and caches results keyed on `(block_index, params)`. Target < 50ms per call for smooth interaction. Consider caching intermediate results (e.g., cache the filtered position and only recompute velocity/saccades when only saccade params change).
 
 ---
 
 ### 4. `compute_cycle_analysis(session: dict, block_index: int, params: dict) -> dict`
 
-**Called by:** A2 (Block Analysis) on block selection and parameter changes.
+**Called by:** `AnalysisViewModel._recompute_current_block()` alongside `process_block`, on block selection and parameter changes.
 
 **Must return:**
 
@@ -227,7 +261,7 @@ All arrays must have the same length `N` (typically `sample_rate * block_duratio
 
 ### 5. `compute_block_metrics(session: dict, block_index: int, params: dict) -> dict`
 
-**Called by:** A2 (Block Analysis) alongside `compute_cycle_analysis`.
+**Called by:** `AnalysisViewModel._recompute_current_block()` alongside `compute_cycle_analysis`.
 
 **Must return:**
 
@@ -255,7 +289,7 @@ This is typically computed from the same data as `compute_cycle_analysis`. Consi
 
 ### 6. `compute_all_results(session: dict, params: dict) -> list[dict]`
 
-**Called by:** A3 (Results Summary) when switching to the results tab (lazy computation).
+**Called by:** `AnalysisViewModel._ensure_all_results_computed()` when switching to the A2 Results Summary tab (lazy computation).
 
 **Must return:** A list of dicts, one per enabled block, each with the same structure as `compute_block_metrics` above.
 
@@ -265,7 +299,7 @@ This is typically computed from the same data as `compute_cycle_analysis`. Consi
 
 ### 7. `export_excel(results: list[dict], path: str) -> None`
 
-**Called by:** A3 export bar.
+**Called by:** `AnalysisViewModel.export_excel()` via A2 export bar.
 
 **Input:** The results list from `compute_all_results` and the output file path (`.xlsx`).
 
@@ -275,7 +309,7 @@ Write block metrics to an Excel spreadsheet. Consider using `openpyxl` or `panda
 
 ### 8. `export_figures(results: list[dict], path: str) -> None`
 
-**Called by:** A3 export bar.
+**Called by:** `AnalysisViewModel.export_figures()` via A2 export bar.
 
 **Input:** Results list and output path (`.pdf`).
 
@@ -285,7 +319,7 @@ Generate publication-quality figures (gain vs block, phase vs block, etc.) and s
 
 ### 9. `export_workspace(results: list[dict], path: str) -> None`
 
-**Called by:** A3 export bar.
+**Called by:** `AnalysisViewModel.export_workspace()` via A2 export bar.
 
 **Input:** Results list and output path (`.mat`).
 
@@ -320,7 +354,10 @@ Open `stubs.py` and replace one function at a time. For example, to integrate `p
 **Before:**
 ```python
 def process_block(session, block_index, params):
-    return mock_data.generate_mock_block_signals(block_index, params)
+    key = ("process_block", block_index, _params_key(params))
+    if key not in _cache:
+        _cache[key] = mock_data.generate_mock_block_signals(block_index, params)
+    return _cache[key]
 ```
 
 **After:**
@@ -330,53 +367,56 @@ def process_block(session, block_index, params):
     from .differentiation import compute_velocity
     from .saccade_detection import detect_saccades
 
-    block = session["blocks"][block_index]
-    raw_pos = _extract_block_signal(session, block)
+    key = ("process_block", block_index, _params_key(params))
+    if key not in _cache:
+        block = session["blocks"][block_index]
+        raw_pos = _extract_block_signal(session, block)
 
-    filtered_pos = apply_position_filter(
-        raw_pos, session["sample_rate"],
-        method=params["filter_method"],
-        cutoff_hz=params["lp_cutoff_hz"],
-    )
+        filtered_pos = apply_position_filter(
+            raw_pos, session["sample_rate"],
+            method=params["filter_method"],
+            cutoff_hz=params["lp_cutoff_hz"],
+        )
 
-    raw_vel = compute_velocity(
-        raw_pos, session["sample_rate"],
-        window_ms=params["sg_window_ms"],
-    )
-    filtered_vel = compute_velocity(
-        filtered_pos, session["sample_rate"],
-        window_ms=params["sg_window_ms"],
-    )
+        raw_vel = compute_velocity(
+            raw_pos, session["sample_rate"],
+            window_ms=params["sg_window_ms"],
+        )
+        filtered_vel = compute_velocity(
+            filtered_pos, session["sample_rate"],
+            window_ms=params["sg_window_ms"],
+        )
 
-    saccade_mask = detect_saccades(
-        filtered_vel, session["sample_rate"],
-        method=params["saccade_method"],
-        threshold=params["saccade_threshold"],
-        min_dur_ms=params["saccade_min_dur_ms"],
-        padding_ms=params["saccade_padding_ms"],
-    )
+        saccade_mask = detect_saccades(
+            filtered_vel, session["sample_rate"],
+            method=params["saccade_method"],
+            threshold=params["saccade_threshold"],
+            min_dur_ms=params["saccade_min_dur_ms"],
+            padding_ms=params["saccade_padding_ms"],
+        )
 
-    t = np.arange(len(raw_pos)) / session["sample_rate"]
-    stimulus = _extract_stimulus(session, block)
+        t = np.arange(len(raw_pos)) / session["sample_rate"]
+        stimulus = _extract_stimulus(session, block)
 
-    return {
-        "time": t.astype(np.float32),
-        "raw_position": raw_pos.astype(np.float32),
-        "filtered_position": filtered_pos.astype(np.float32),
-        "raw_velocity": raw_vel.astype(np.float32),
-        "filtered_velocity": filtered_vel.astype(np.float32),
-        "stimulus": stimulus.astype(np.float32),
-        "saccade_mask": saccade_mask.astype(bool),
-    }
+        _cache[key] = {
+            "time": t.astype(np.float32),
+            "raw_position": raw_pos.astype(np.float32),
+            "filtered_position": filtered_pos.astype(np.float32),
+            "raw_velocity": raw_vel.astype(np.float32),
+            "filtered_velocity": filtered_vel.astype(np.float32),
+            "stimulus": stimulus.astype(np.float32),
+            "saccade_mask": saccade_mask.astype(bool),
+        }
+    return _cache[key]
 ```
 
 ### Step 3: Recommended integration order
 
 1. **`load_experiment_file`** — Start here. Once real data loads, you can visually verify everything in W1.
-2. **`process_block`** — The core signal processing pipeline. This lets you verify filtering, differentiation, and saccade detection in A1 with real-time parameter tuning.
+2. **`process_block`** — The core signal processing pipeline. This lets you verify filtering, differentiation, and saccade detection in W3 with real-time parameter tuning.
 3. **`apply_calibration`** — Needed for proper scaling but can be deferred.
-4. **`compute_cycle_analysis`** + **`compute_block_metrics`** — Integrate together since they share computations. Verify in A2.
-5. **`compute_all_results`** — Usually just loops `compute_block_metrics`. Verify in A3.
+4. **`compute_cycle_analysis`** + **`compute_block_metrics`** — Integrate together since they share computations. Verify in A1.
+5. **`compute_all_results`** — Usually just loops `compute_block_metrics`. Verify in A2.
 6. **`export_*`** — Last, since they don't affect visualization.
 
 ### Step 4: Test each replacement
@@ -387,9 +427,8 @@ After replacing each stub:
 2. Load a real data file
 3. Navigate to the relevant screen
 4. Verify the plots render correctly
-5. For `process_block`: drag all sliders and confirm real-time updates work without lag
-6. Switch themes to confirm plots still render
-7. Test edge cases: first/last block, blocks with no good cycles, very short blocks
+5. For `process_block`: adjust all parameter controls in W3 and confirm real-time updates work without lag
+6. Test edge cases: first/last block, blocks with no good cycles, very short blocks
 
 ### Step 5: Remove mock_data.py
 
@@ -399,17 +438,29 @@ Once all stubs are replaced with real implementations, delete `mock_data.py` and
 
 ## GUI Consumption Reference
 
-This table shows exactly which screen calls which stub and what it does with the return data:
+This table shows how stub results flow through the ViewModel to each screen:
 
-| Stub Function | Screen | What the GUI Does |
-|---|---|---|
-| `load_experiment_file` | W1 | Plots `timelines` in 3 overview plots, fills block table from `blocks`, shows `file_info` and `metadata_defaults` |
-| `apply_calibration` | A1 | Stores `scale_ch1`, `scale_ch2`, `active_channel` in AppState |
-| `process_block` | A1 | Plots all 7 arrays as traces on 2 linked pyqtgraph plots; uses `saccade_mask` for region shading |
-| `compute_cycle_analysis` | A2 | Plots `cycle_traces` individually or as average+SEM+fit depending on display mode; `cycle_quality` drives CycleNavigator colors |
-| `compute_block_metrics` | A2 | Displays all values in the metrics card (9 labels) |
-| `compute_all_results` | A3 | Feeds scatter plot (x=block#, y=selected metric) and results table (11 columns) |
-| `export_*` | A3 | Called on button click with results list and auto-generated path |
+| Stub Function | ViewModel Method | Screen | What the GUI Does |
+|---|---|---|---|
+| `load_experiment_file` | `load_file()` | W1 | Plots `timelines` in 3 overview plots, fills block table from `blocks`, shows `file_info` and `metadata_defaults` |
+| `apply_calibration` | `load_calibration_file()` | W3 | Stores `scale_ch1`, `scale_ch2`, `active_channel` on `CalibrationData` in `SessionModel` |
+| `process_block` | `_recompute_current_block()` | W3 | Plots all 7 arrays as traces on 2 linked pyqtgraph plots; uses `saccade_mask` for saccade trace overlay and region shading |
+| `compute_cycle_analysis` | `_recompute_current_block()` | A1 | Plots `cycle_traces` individually or as average+SEM+fit depending on display mode; `cycle_quality` drives CycleNavigator colors |
+| `compute_block_metrics` | `_recompute_current_block()` | A1 | Displays all values in the metrics card (9 labels) |
+| `compute_all_results` | `_ensure_all_results_computed()` | A2 | Feeds scatter plot (x=block#, y=selected metric) and results table (11 columns) |
+| `export_*` | `export_excel/figures/workspace()` | A2 | Called on button click with results list and auto-generated path |
+
+### Caching
+
+The ViewModel caches results on the `SessionModel`:
+- `current_block_signals` — result of `process_block` for the selected block
+- `current_cycle_data` — result of `compute_cycle_analysis` for the selected block
+- `current_block_metrics` — result of `compute_block_metrics` for the selected block
+- `all_results` — result of `compute_all_results` (lazy, computed on first A2 visit)
+
+The `stubs.py` module also has its own `_cache` dict keyed on `(function_name, block_index, params_tuple)`. This cache is cleared on each `load_experiment_file` call.
+
+When parameters change, the ViewModel invalidates `all_results` (sets it to `None`) so it will be recomputed on the next A2 visit.
 
 ---
 
@@ -419,14 +470,16 @@ This table shows exactly which screen calls which stub and what it does with the
 
 2. **All arrays in a return dict must have consistent lengths.** If `time` has 60000 elements, every other array in that dict must also have 60000 elements.
 
-3. **`process_block` is performance-critical.** It's called on every slider change (debounced at 80ms). If it takes > 100ms, the UI will feel sluggish. Profile and optimize this function first.
+3. **`process_block` is performance-critical.** It's called on every parameter change (debounced at 80ms by the ViewModel's `QTimer`). If it takes > 100ms, the UI will feel sluggish. Profile and optimize this function first.
 
 4. **`cycle_quality` must be a Python `list[bool]`, not a numpy array.** The CycleNavigator iterates over it with Python indexing.
 
-5. **`compute_all_results` can be slow.** It processes all blocks. The GUI handles this by only calling it lazily (when the user switches to the A3 tab). No special handling needed — just be aware it may take a few seconds.
+5. **`compute_all_results` can be slow.** It processes all blocks. The ViewModel handles this by only calling it lazily (when the user switches to the A2 tab via `_ensure_all_results_computed()`). No special handling needed — just be aware it may take a few seconds.
 
 6. **Don't modify the session dict.** Functions receive the session dict by reference. If your backend needs to cache processed data, store it in a separate cache structure rather than mutating the session.
 
 7. **Block indices are 0-based.** The GUI adds 1 for display purposes. Your backend should use 0-based indices consistently.
 
 8. **The `blocks` list in the session dict may have `enabled: False` entries.** `compute_all_results` should skip disabled blocks (or include them — the GUI handles both, but skipping is cleaner).
+
+9. **The stubs cache uses `_params_key(params)` for cache keys.** This converts the params dict to a sorted tuple. If you add custom caching inside your backend modules, use a similar approach to avoid stale results when parameters change.
